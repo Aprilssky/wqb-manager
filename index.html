@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WQB Manager — Alpha Management</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header>
+  <h1>🧠 <span>WQB</span> Manager</h1>
+  <div class="status-badge">
+    <span class="status-dot" id="status-dot"></span>
+    <span id="status-text">Loading...</span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="dashboard" onclick="switchTab('dashboard')" class="active">📊 Dashboard</button>
+  <button data-tab="templates" onclick="switchTab('templates')">📋 Templates</button>
+  <button data-tab="alphas" onclick="switchTab('alphas')">📈 Alphas</button>
+  <button data-tab="generate" onclick="switchTab('generate')">🔧 Generate</button>
+</nav>
+
+<main>
+  <div id="tab-dashboard" class="tab-content active">
+    <div id="dashboard-content"></div>
+  </div>
+  
+  <div id="tab-templates" class="tab-content">
+    <div id="templates-content"></div>
+  </div>
+  
+  <div id="tab-alphas" class="tab-content">
+    <div id="alphas-content"></div>
+  </div>
+  
+  <div id="tab-generate" class="tab-content">
+    <div id="generate-content"></div>
+  </div>
+</main>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-content"></div>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
