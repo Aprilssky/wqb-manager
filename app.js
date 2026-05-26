@@ -1,16 +1,18 @@
 /* WQB Manager — JavaScript */
 
 // ── API Config ──
+const DEFAULT_API = 'http://203.83.228.3:8008';
 const API = (() => {
-  // Try to get API URL from config, fallback to same origin or ty server
   const stored = localStorage.getItem('wqb_api_url');
-  if (stored) return stored;
-  // Default: same origin (when served from ty server)
-  return window.location.origin;
+  return stored || DEFAULT_API;
 })();
 
+function getApiUrl() {
+  return localStorage.getItem('wqb_api_url') || DEFAULT_API;
+}
+
 async function api(path, opts = {}) {
-  const url = `${API}${path}`;
+  const url = `${getApiUrl()}${path}`;
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...opts.headers },
     ...opts,
@@ -21,6 +23,12 @@ async function api(path, opts = {}) {
     throw new Error(msg);
   }
   return res.json();
+}
+
+function setApiUrl(url) {
+  localStorage.setItem('wqb_api_url', url);
+  toast('API URL updated. Refreshing...', 'success');
+  setTimeout(() => location.reload(), 1000);
 }
 
 // ── State ──
@@ -682,6 +690,26 @@ window.submitAlpha = async function(expr) {
   } catch (e) {
     toast('Submit error: ' + e.message, 'error');
   }
+};
+
+// ── Settings ──
+window.showSettings = function() {
+  const modal = document.getElementById('modal');
+  modal.querySelector('.modal-content').innerHTML = `
+    <h2>Settings</h2>
+    <label>API URL</label>
+    <input id="api-url-input" value="${getApiUrl()}" placeholder="http://203.83.228.3:8008" />
+    <p style="color:var(--text2);font-size:12px;margin-bottom:12px">
+      If accessing from GitHub Pages (HTTPS), the API URL must support CORS.
+      You can also access the app directly via the API server at
+      <a href="${getApiUrl()}" target="_blank" style="color:var(--accent)">${getApiUrl()}</a>
+    </p>
+    <div class="btn-group">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="setApiUrl(document.getElementById('api-url-input').value)">Save</button>
+    </div>
+  `;
+  modal.classList.add('show');
 };
 
 // ── Init ──
