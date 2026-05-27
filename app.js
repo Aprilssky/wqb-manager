@@ -1,7 +1,7 @@
-/* WQB Manager — MCP Edition */
-/* Connects to WQB via MCP protocol (JSON-RPC 2.0 over HTTP) */
+/* WQB Manager — MCP SSE Edition */
+/* Connects to WQB via MCP protocol over SSE (Server-Sent Events) */
 
-// ── MCP Client ──
+// ── MCP URL Config ──
 const DEFAULT_MCP_URL = 'http://203.83.228.3:8009/mcp';
 
 function getMcpUrl() {
@@ -14,99 +14,202 @@ function setMcpUrl(url) {
   setTimeout(() => location.reload(), 1000);
 }
 
-class McpClient {
+// ── MCP SSE Client ──
+class McpSseClient {
   constructor(url) {
     this.url = url;
-    this._reqId = 1;
+    this.sessionId = null;
     this.serverInfo = null;
-    this._toolMap = {}; // name -> tool definition
+    this._reqId = 1;
+    this._pending = new Map();
+    this._reader = null;
+    this._abort = null;
+    this._connected = false;
+    this._tools = {};
+    this._sseBuffer = '';
   }
 
-  async _request(method, params = {}) {
-    const id = this._reqId++;
-    const body = JSON.stringify({
+  _nextId() { return this._reqId++; }
+
+  async connect() {
+    this._abort = new AbortController();
+
+    // Step 1: Initialize via POST
+    const initReq = {
+      jsonrpc: '2.0',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        client: { name: 'wqb-manager', version: '2.0.0' },
+      },
+      id: this._nextId(),
+    };
+
+    const res = await fetch(this.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+      },
+      body: JSON.stringify(initReq),
+      signal: this._abort.signal,
+    });
+
+    if (!res.ok) throw new Error(`MCP init failed: ${res.status}`);
+
+    this.sessionId = res.headers.get('mcp-session-id');
+
+    // Step 2: Read SSE stream for responses
+    this._reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await this._reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE events from buffer
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const block of events) {
+        const lines = block.split('\n');
+        let eventType = 'message';
+        let data = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) eventType = line.slice(7);
+          else if (line.startsWith('data: ')) data = line.slice(6);
+        }
+
+        if (eventType === 'message' && data) {
+          try {
+            const msg = JSON.parse(data);
+            if (msg.id !== undefined) {
+              const pending = this._pending.get(msg.id);
+              if (pending) {
+                this._pending.delete(msg.id);
+                if (msg.error) pending.reject(new Error(msg.error.message || 'MCP error'));
+                else pending.resolve(msg.result);
+              }
+            }
+          } catch (e) {
+            console.warn('SSE parse:', e);
+          }
+        }
+      }
+    }
+
+    // Stream ended — if there are still pending, reject them
+    for (const [id, p] of this._pending) {
+      p.reject(new Error('MCP stream closed'));
+      this._pending.delete(id);
+    }
+  }
+
+  async _call(method, params = {}) {
+    if (!this.sessionId) throw new Error('Not connected');
+
+    const id = this._nextId();
+    const body = {
       jsonrpc: '2.0',
       method,
       params,
       id,
-    });
-    try {
-      const res = await fetch(this.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-      const data = await res.json();
-      if (data.error) {
-        throw new Error(data.error.message || `MCP error: ${JSON.stringify(data.error)}`);
-      }
-      return data.result;
-    } catch (e) {
-      if (e.name === 'TypeError' && e.message.includes('fetch')) {
-        throw new Error(`Connection failed: ${this.url}`);
-      }
-      throw e;
-    }
-  }
+    };
 
-  async initialize() {
-    const result = await this._request('initialize', {
-      protocolVersion: '2024-11-05',
-      client: { name: 'wqb-manager', version: '2.0.0' },
+    const sep = this.url.includes('?') ? '&' : '?';
+    const callUrl = `${this.url}${sep}session_id=${this.sessionId}`;
+
+    return new Promise((resolve, reject) => {
+      this._pending.set(id, { resolve, reject });
+
+      fetch(callUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/event-stream',
+        },
+        body: JSON.stringify(body),
+        signal: this._abort.signal,
+      }).catch(err => {
+        const p = this._pending.get(id);
+        if (p) { this._pending.delete(id); p.reject(err); }
+      });
     });
-    this.serverInfo = result;
-    return result;
   }
 
   async listTools() {
-    const result = await this._request('tools/list', {});
+    const result = await this._call('tools/list', {});
     const tools = result.tools || [];
-    this._toolMap = {};
-    for (const t of tools) {
-      this._toolMap[t.name] = t;
-    }
+    this._tools = {};
+    for (const t of tools) this._tools[t.name] = t;
     return tools;
   }
 
   async callTool(name, args = {}) {
-    const result = await this._request('tools/call', {
-      name,
-      arguments: args,
-    });
-    // If result has content array (MCP standard), parse it
+    const result = await this._call('tools/call', { name, arguments: args });
+    // Parse MCP content array
     if (result && result.content && Array.isArray(result.content)) {
       const texts = result.content
         .filter(c => c.type === 'text')
-        .map(c => {
-          try { return JSON.parse(c.text); }
-          catch { return c.text; }
-        });
-      if (texts.length === 1) return texts[0];
-      return texts.length ? texts : result;
+        .map(c => { try { return JSON.parse(c.text); } catch { return c.text; } });
+      return texts.length === 1 ? texts[0] : texts.length ? texts : result;
     }
     return result;
   }
 
-  get tools() { return this._toolMap; }
+  disconnect() {
+    if (this._abort) this._abort.abort();
+    if (this._reader) this._reader.cancel();
+    this._connected = false;
+  }
+
+  get connected() { return !!this.sessionId; }
+  get tools() { return this._tools; }
 }
 
 let mcp = null;
 
-// ── MCP helpers (wrapped for UI) ──
-async function mcpInit() {
+// ── MCP wrappers ──
+async function mcpConnect() {
+  if (mcp) mcp.disconnect();
   const url = getMcpUrl();
-  mcp = new McpClient(url);
-  await mcp.initialize();
+  mcp = new McpSseClient(url);
+
+  // Connect & initialize — this blocks until stream closes or init done
+  const connectPromise = mcp.connect();
+
+  // Wait for init response (first SSE message)
+  // We do this by polling for sessionId with a short timeout
+  let waited = 0;
+  while (!mcp.sessionId && waited < 10000) {
+    await new Promise(r => setTimeout(r, 100));
+    waited += 100;
+  }
+
+  if (!mcp.sessionId) throw new Error('MCP init timeout');
+
+  // Now discover tools
   const tools = await mcp.listTools();
+
+  // Start background keep-alive (the SSE connection stays alive)
+  connectPromise.catch(err => {
+    console.warn('MCP SSE stream ended:', err);
+    // Try to reconnect?
+  });
+
   return { tools, serverInfo: mcp.serverInfo };
 }
 
 async function mcpCall(name, args) {
-  if (!mcp) throw new Error('MCP not initialized');
+  if (!mcp || !mcp.connected) throw new Error('MCP not connected');
   return mcp.callTool(name, args);
 }
 
-// ── Auto-detect tool name with fallback ──
 function toolName(candidates) {
   if (!mcp) return candidates[0];
   for (const c of candidates) {
@@ -117,7 +220,6 @@ function toolName(candidates) {
 
 // ── State ──
 const state = {
-  serverInfo: null,
   templates: [],
   alphas: { results: [], count: 0 },
   operators: {},
@@ -159,9 +261,9 @@ async function loadDashboard() {
   const el = document.getElementById('dashboard-content');
   el.innerHTML = '<div class="loader" style="margin:40px auto"></div>';
   try {
-    const tool = toolName(['get_status', 'wqb.get_status', 'status', 'server_status', 'health']);
-    const status = await mcpCall(tool);
-    state.serverInfo = status;
+    const status = await mcpCall(toolName([
+      'get_status', 'wqb.get_status', 'status', 'server_status', 'health',
+    ]));
     document.getElementById('status-dot').className = `status-dot ${status.connected ? 'connected' : ''}`;
     document.getElementById('status-text').textContent = status.connected
       ? `${status.user_id || status.username || 'Connected'}`
@@ -185,30 +287,18 @@ async function loadDashboard() {
 
     el.innerHTML = `
       <div class="stats-grid">
-        <div class="stat-box">
-          <div class="num">${status.connected ? '✅' : '❌'}</div>
-          <div class="label">WQB Connected</div>
-        </div>
-        <div class="stat-box">
-          <div class="num">${alphaCount.toLocaleString()}</div>
-          <div class="label">Alphas</div>
-        </div>
-        <div class="stat-box">
-          <div class="num">${opCount}</div>
-          <div class="label">Operators</div>
-        </div>
-        <div class="stat-box">
-          <div class="num">${tmplCount}</div>
-          <div class="label">Templates</div>
-        </div>
+        <div class="stat-box"><div class="num">${status.connected ? '✅' : '❌'}</div><div class="label">WQB Connected</div></div>
+        <div class="stat-box"><div class="num">${alphaCount.toLocaleString()}</div><div class="label">Alphas</div></div>
+        <div class="stat-box"><div class="num">${opCount}</div><div class="label">Operators</div></div>
+        <div class="stat-box"><div class="num">${tmplCount}</div><div class="label">Templates</div></div>
       </div>
       <div class="card">
         <h3>Connection Info</h3>
         <table>
           <tr><td style="width:120px">Server</td><td>${getMcpUrl()}</td></tr>
-          <tr><td>Protocol</td><td>MCP ${(mcp.serverInfo && mcp.serverInfo.protocolVersion) || '-'}</td></tr>
+          <tr><td>Session</td><td style="font-family:monospace;font-size:11px">${mcp ? (mcp.sessionId || '-') : '-'}</td></tr>
           <tr><td>Status</td><td><span class="tag ${status.connected ? 'tag-green' : 'tag-red'}">${status.connected ? 'Connected' : 'Disconnected'}</span></td></tr>
-          <tr><td>Available Tools</td><td>${(state.tools.length || '?')} tools</td></tr>
+          <tr><td>Available Tools</td><td>${Object.keys(mcp ? mcp.tools : {}).length} tools</td></tr>
         </table>
       </div>
       <div class="card">
@@ -218,8 +308,7 @@ async function loadDashboard() {
           <button class="btn btn-primary" onclick="switchTab('alphas')">View Alphas</button>
           <button class="btn btn-primary" onclick="switchTab('generate')">Generate New Alpha</button>
         </div>
-      </div>
-    `;
+      </div>`;
   } catch (e) {
     el.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><p>Failed to connect: ${e.message}</p>
       <p style="font-size:12px;color:var(--text2);margin-top:8px">
@@ -309,8 +398,7 @@ function showTemplateEditor(index) {
     <div class="btn-group">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveTemplate(${index})">Save</button>
-    </div>
-  `;
+    </div>`;
   modal.classList.add('show');
 }
 
@@ -329,8 +417,7 @@ window.addVar = function() {
       <option value="normal" selected>Normal Value</option>
     </select>
     <textarea id="var-${name}" rows="4" placeholder="One value per line"></textarea>
-    <button class="btn btn-sm btn-danger" onclick="removeVar('${name}')" style="margin-top:4px">Remove</button>
-  `;
+    <button class="btn btn-sm btn-danger" onclick="removeVar('${name}')" style="margin-top:4px">Remove</button>`;
   container.appendChild(div);
 };
 
@@ -441,39 +528,32 @@ window.updateGenerateForm = function() {
   const detail = document.getElementById('gen-template-detail');
   let varsHtml = '';
   if (t.templateConfigurations) {
-    varsHtml = Object.entries(t.templateConfigurations).map(([key, conf]) => {
-      return `<span class="tag tag-blue" style="margin:2px">&lt;${key}/&gt; (${(conf.variables || []).length} vals)</span>`;
-    }).join(' ');
+    varsHtml = Object.entries(t.templateConfigurations)
+      .map(([key, conf]) => `<span class="tag tag-blue" style="margin:2px">&lt;${key}/&gt; (${(conf.variables || []).length} vals)</span>`)
+      .join(' ');
   }
 
   detail.innerHTML = `
     <p style="margin:8px 0"><strong>${t.name}</strong> — ${t.description || ''}</p>
     <div class="code-block">${t.expression || ''}</div>
-    <div style="margin:8px 0">${varsHtml}</div>
-  `;
+    <div style="margin:8px 0">${varsHtml}</div>`;
 
   const params = document.getElementById('gen-params');
   params.innerHTML = `
     <div class="form-row">
       <div><label>Region</label><select id="gen-region">
-        <option value="USA">USA</option>
-        <option value="CHN">CHN</option>
-        <option value="EUR">EUR</option>
-        <option value="JPN">JPN</option>
+        <option value="USA">USA</option><option value="CHN">CHN</option>
+        <option value="EUR">EUR</option><option value="JPN">JPN</option>
       </select></div>
       <div><label>Delay</label><select id="gen-delay">
-        <option value="0">0</option>
-        <option value="1" selected>1</option>
+        <option value="0">0</option><option value="1" selected>1</option>
       </select></div>
       <div><label>Universe</label><select id="gen-universe">
-        <option value="TOP3000">TOP3000</option>
-        <option value="TOP1000">TOP1000</option>
-        <option value="TOP500">TOP500</option>
+        <option value="TOP3000">TOP3000</option><option value="TOP1000">TOP1000</option><option value="TOP500">TOP500</option>
       </select></div>
       <div><label>Max Samples</label><input id="gen-max" type="number" value="50" min="1" max="500" /></div>
     </div>
-    <button class="btn btn-primary" onclick="previewGenerate()">Preview Generated Alphas</button>
-  `;
+    <button class="btn btn-primary" onclick="previewGenerate()">Preview Generated Alphas</button>`;
 };
 
 window.previewGenerate = async function() {
@@ -493,9 +573,9 @@ window.previewGenerate = async function() {
 
   try {
     const result = await mcpCall(toolName(['generate_alphas', 'wqb.generate_alphas', 'generate', 'templates_generate']), data);
-
-    const preview = document.getElementById('gen-preview');
     const alphas = result.alphas || result.results || [];
+    const preview = document.getElementById('gen-preview');
+
     if (!alphas.length) {
       preview.innerHTML = '<p style="color:var(--text2)">No alphas generated</p>';
       return;
@@ -504,21 +584,17 @@ window.previewGenerate = async function() {
     preview.innerHTML = `
       <p><strong>${alphas.length}</strong> alphas generated</p>
       <div class="table-wrap" style="max-height:300px;overflow-y:auto">
-      <table>
-        <thead><tr><th>#</th><th>Expression</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${alphas.map((a, i) => `<tr>
-            <td>${i+1}</td>
-            <td><span class="expr-preview">${a.expression || a.code || ''}</span></td>
-            <td><button class="btn btn-sm" onclick="simulateSingle('${(a.expression || a.code || '').replace(/'/g, "\\'")}')">Simulate</button></td>
-          </tr>`).join('')}
-        </tbody>
-      </table></div>
+      <table><thead><tr><th>#</th><th>Expression</th><th>Actions</th></tr></thead><tbody>
+        ${alphas.map((a, i) => `<tr>
+          <td>${i+1}</td>
+          <td><span class="expr-preview">${a.expression || a.code || ''}</span></td>
+          <td><button class="btn btn-sm" onclick="simulateSingle('${(a.expression || a.code || '').replace(/'/g, "\\'")}')">Simulate</button></td>
+        </tr>`).join('')}
+      </tbody></table></div>
       <div class="btn-group" style="margin-top:8px">
         <button class="btn btn-primary" onclick="batchSimulateGenerated()">🚀 Batch Simulate All</button>
         <button class="btn" onclick="exportAlphas()">📥 Export JSON</button>
-      </div>
-    `;
+      </div>`;
     window._generatedAlphas = alphas;
   } catch (e) {
     toast(e.message, 'error');
@@ -578,9 +654,7 @@ window.batchSimulateGenerated = async function() {
       return `<tr ${highlight}>
         <td>${i+1}</td>
         <td><span class="expr-preview">${String(expr).substring(0, 80)}</span></td>
-        <td>${status}</td>
-        <td>${sharpe}</td>
-        <td>${fitness}</td>
+        <td>${status}</td><td>${sharpe}</td><td>${fitness}</td>
       </tr>`;
     }).join('');
 
@@ -620,7 +694,6 @@ async function loadAlphas() {
     const status = document.getElementById('alpha-status')?.value || '';
     const search = document.getElementById('alpha-search')?.value || '';
     const region = document.getElementById('alpha-region')?.value || 'USA';
-
     const params = { limit: 50, region };
     if (status) params.status = status;
     if (search) params.search = search;
@@ -644,10 +717,8 @@ function renderAlphas() {
   <div class="filter-bar">
     <input id="alpha-search" placeholder="Search..." onchange="loadAlphas()" />
     <select id="alpha-region" onchange="loadAlphas()">
-      <option value="USA">USA</option>
-      <option value="CHN">CHN</option>
-      <option value="EUR">EUR</option>
-      <option value="JPN">JPN</option>
+      <option value="USA">USA</option><option value="CHN">CHN</option>
+      <option value="EUR">EUR</option><option value="JPN">JPN</option>
     </select>
     <select id="alpha-status" onchange="loadAlphas()">
       <option value="">All Status</option>
@@ -687,8 +758,8 @@ function renderAlphas() {
       <td style="font-size:11px;color:var(--text2)">${(a.dateModified || '').substring(0, 16)}</td>
     </tr>`;
   });
-
   html += '</tbody></table></div>';
+
   html += `
   <div class="card" style="margin-top:12px">
     <h3>Single Alpha Simulator</h3>
@@ -696,19 +767,17 @@ function renderAlphas() {
     <textarea id="sim-expr" rows="3" placeholder="e.g. group(rank(close), sector)"></textarea>
     <div class="form-row">
       <div><label>Region</label><select id="sim-region">
-        <option value="USA">USA</option>
-        <option value="CHN">CHN</option>
-        <option value="EUR">EUR</option>
-        <option value="JPN">JPN</option>
+        <option value="USA">USA</option><option value="CHN">CHN</option>
+        <option value="EUR">EUR</option><option value="JPN">JPN</option>
       </select></div>
       <div><label>Delay</label><select id="sim-delay"><option value="0">0</option><option value="1" selected>1</option></select></div>
-      <div><label>Universe</label><select id="sim-universe"><option value="TOP3000">TOP3000</option><option value="TOP1000">TOP1000</option>
-        <option value="TOP500">TOP500</option></select></div>
+      <div><label>Universe</label><select id="sim-universe">
+        <option value="TOP3000">TOP3000</option><option value="TOP1000">TOP1000</option><option value="TOP500">TOP500</option>
+      </select></div>
     </div>
     <button class="btn btn-primary" onclick="simulateAlpha()">Simulate</button>
     <div id="sim-result" style="margin-top:8px"></div>
   </div>`;
-
   el.innerHTML = html;
 }
 
@@ -740,14 +809,9 @@ window.simulateAlpha = async function() {
         <div class="stat-box"><div class="num">${isData.returns ?? result.returns ?? '-'}</div><div class="label">Returns</div></div>
         <div class="stat-box"><div class="num">${isData.drawdown ?? result.drawdown ?? '-'}</div><div class="label">Drawdown</div></div>
       </div>
-      <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
-        <div class="stat-box"><div class="num">${isData.turnover ?? result.turnover ?? '-'}</div><div class="label">Turnover</div></div>
-        <div class="stat-box"><div class="num">${result.status || '-'}</div><div class="label">Status</div></div>
-      </div>
-      <div class="btn-group">
+      <div class="btn-group" style="margin-top:8px">
         <button class="btn btn-sm btn-primary" onclick="submitAlpha('${expr.replace(/'/g, "\\'")}')">Submit Alpha</button>
-      </div>
-    `;
+      </div>`;
 
     const sv = parseFloat(isData.sharpe ?? result.sharpe);
     if (!isNaN(sv) && sv > 1.5) toast(`Sharpe: ${sv} 🎯`, 'success');
@@ -778,11 +842,10 @@ window.showSettings = function() {
     <label>MCP URL</label>
     <input id="mcp-url-input" value="${getMcpUrl()}" placeholder="http://203.83.228.3:8009/mcp" />
     <p style="color:var(--text2);font-size:12px;margin-bottom:12px">
-      MCP (Model Context Protocol) endpoint. The server must support CORS
-      for browser access. Configure your WQB MCP server URL here.
+      MCP (Model Context Protocol) endpoint via SSE transport.
     </p>
     <p style="color:var(--text2);font-size:12px;margin-bottom:12px">
-      Typical config for Claude Desktop / AI client:
+      Typical config for Claude Desktop:
     </p>
     <div class="code-block" style="font-size:11px;margin-bottom:12px">{
   "mcpServers": {
@@ -794,31 +857,23 @@ window.showSettings = function() {
     <div class="btn-group">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="setMcpUrl(document.getElementById('mcp-url-input').value)">Save</button>
-    </div>
-  `;
+    </div>`;
   modal.classList.add('show');
 };
 
-// ── MCP Connection Tools (exposed for script) ──
-window.mcpInit = mcpInit;
-window.mcpCall = mcpCall;
-window.state = state;
-
 // ── Init ──
 document.addEventListener('DOMContentLoaded', async () => {
-  // Create toast container
   const tc = document.createElement('div');
   tc.id = 'toast-container';
   tc.className = 'toast-container';
   document.body.appendChild(tc);
 
-  // Connect via MCP
   try {
-    const { tools } = await mcpInit();
+    const { tools } = await mcpConnect();
     state.tools = tools;
     document.getElementById('status-dot').className = 'status-dot connected';
-    document.getElementById('status-text').textContent = `MCP ✓ (${tools.length} tools)`;
-    toast('MCP connected: ' + getMcpUrl(), 'success');
+    document.getElementById('status-text').textContent = `MCP SS-SSE ✓ (${Object.keys(tools).length} tools)`;
+    toast('MCP connected', 'success');
   } catch (e) {
     console.warn('MCP init failed:', e);
     document.getElementById('status-dot').className = 'status-dot';
@@ -826,6 +881,5 @@ document.addEventListener('DOMContentLoaded', async () => {
     toast('MCP connection failed: ' + e.message, 'error');
   }
 
-  // Load dashboard
   switchTab('dashboard');
 });
