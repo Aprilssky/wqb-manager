@@ -360,6 +360,110 @@ tr:last-child td { border-bottom: none; }
   overflow-y: auto;
 }
 
+/* ── Data Browser ── */
+.data-browser .dataset-list, .data-browser .field-list {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+.data-browser table td { font-size: 12px; }
+.data-browser table td small { color: var(--text2); font-size: 11px; }
+
+.data-browser .selected-list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.data-browser .selected-list .item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  margin: 2px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.data-browser .selected-list .item:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.data-browser .selected-list .item .remove {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.6;
+}
+.data-browser .selected-list .item:hover .remove {
+  opacity: 1;
+}
+
+.data-browser .detail-panel {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 8px 0;
+}
+.data-browser .detail-panel dt {
+  font-size: 11px;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-top: 8px;
+}
+.data-browser .detail-panel dd {
+  font-size: 13px;
+  margin: 2px 0 0 0;
+  word-break: break-all;
+}
+.data-browser .detail-panel dt:first-child { margin-top: 0; }
+
+.data-browser .pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0;
+}
+.data-browser .pills span {
+  background: rgba(88,166,255,0.12);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+}
+
+.data-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.data-tabs button {
+  padding: 10px 20px;
+  border: none;
+  background: transparent;
+  color: var(--text2);
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.data-tabs button:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+.data-tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   header { flex-direction: column; gap: 8px; }

@@ -219,6 +219,7 @@ function switchTab(name) {
   if (name === 'templates') loadTemplates();
   if (name === 'alphas') loadAlphas();
   if (name === 'generate') loadGenerate();
+  if (name === 'data') loadData();
 }
 
 function closeModal() {
@@ -838,6 +839,288 @@ window.showSettings = function() {
       <button class="btn btn-primary" onclick="setMcpUrl(document.getElementById('mcp-url-input').value)">Save</button>
     </div>`;
   modal.classList.add('show');
+};
+
+// ── Data Browser ──
+const dataState = {
+  datasets: [],
+  fields: [],
+  selected: [],
+  detail: null,
+  mode: 'datasets',
+  loading: false,
+  lastParams: {},
+};
+
+async function loadData() {
+  const el = document.getElementById('data-content');
+  dataState.selected = dataState.selected || [];
+
+  el.innerHTML = `
+    <div class="data-browser">
+      <div class="data-tabs">
+        <button data-dtab="datasets" class="active" onclick="switchDataTab('datasets')">📦 Datasets</button>
+        <button data-dtab="fields" onclick="switchDataTab('fields')">🔤 Fields</button>
+      </div>
+
+      <div id="data-filter-panel"></div>
+      <div id="data-results"></div>
+
+      <div class="card">
+        <h3>📋 Selected Items <span style="font-weight:400;font-size:12px;color:var(--text2)" id="selected-count">(0)</span></h3>
+        <div class="selected-list" id="selected-list">
+          <span style="color:var(--text2);font-size:13px">Click + to add items from search results</span>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-sm" onclick="copySelectedAsJson()">📋 Copy JSON</button>
+          <button class="btn btn-sm btn-danger" onclick="clearSelected()">🗑️ Clear All</button>
+        </div>
+      </div>
+
+      <div id="data-detail"></div>
+    </div>`;
+
+  switchDataTab('datasets');
+}
+
+window.switchDataTab = function(tab) {
+  dataState.mode = tab;
+  document.querySelectorAll('.data-tabs button').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.data-tabs button[data-dtab="${tab}"]`)?.classList.add('active');
+  renderDataFilters();
+};
+
+function renderDataFilters() {
+  const panel = document.getElementById('data-filter-panel');
+  const isDatasets = dataState.mode === 'datasets';
+
+  panel.innerHTML = `
+    <div class="card">
+      <h3>🔍 ${isDatasets ? 'Search Datasets' : 'Search Fields'}</h3>
+      <div class="filter-bar">
+        <input id="data-search" placeholder="Keyword..." value="${dataState.lastParams.search || ''}" />
+        <select id="data-region">
+          <option value="USA" ${(dataState.lastParams.region||'USA')==='USA'?'selected':''}>USA</option>
+          <option value="CHN" ${dataState.lastParams.region==='CHN'?'selected':''}>CHN</option>
+          <option value="EUR" ${dataState.lastParams.region==='EUR'?'selected':''}>EUR</option>
+          <option value="JPN" ${dataState.lastParams.region==='JPN'?'selected':''}>JPN</option>
+        </select>
+        <select id="data-delay">
+          <option value="1" ${(dataState.lastParams.delay||1)==1?'selected':''}>Delay 1</option>
+          <option value="0" ${dataState.lastParams.delay===0?'selected':''}>No Delay</option>
+        </select>
+        <select id="data-universe">
+          <option value="TOP3000" ${(dataState.lastParams.universe||'TOP3000')==='TOP3000'?'selected':''}>TOP3000</option>
+          <option value="TOP1000" ${dataState.lastParams.universe==='TOP1000'?'selected':''}>TOP1000</option>
+          <option value="TOP500" ${dataState.lastParams.universe==='TOP500'?'selected':''}>TOP500</option>
+        </select>
+        ${isDatasets ? '' : `<input id="data-dataset-id" placeholder="Dataset ID filter..." value="${dataState.lastParams.dataset_id || ''}" style="min-width:100px" />`}
+        <select id="data-category">
+          <option value="">All Categories</option>
+          <option value="pv" ${dataState.lastParams.category==='pv'?'selected':''}>PV</option>
+          <option value="model" ${dataState.lastParams.category==='model'?'selected':''}>Model</option>
+          <option value="analyst" ${dataState.lastParams.category==='analyst'?'selected':''}>Analyst</option>
+          <option value="fundamental" ${dataState.lastParams.category==='fundamental'?'selected':''}>Fundamental</option>
+          <option value="technical" ${dataState.lastParams.category==='technical'?'selected':''}>Technical</option>
+          <option value="sentiment" ${dataState.lastParams.category==='sentiment'?'selected':''}>Sentiment</option>
+          <option value="alternative" ${dataState.lastParams.category==='alternative'?'selected':''}>Alternative</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="searchData()">🔍 Search</button>
+      </div>
+    </div>`;
+}
+
+window.searchData = async function() {
+  const isDatasets = dataState.mode === 'datasets';
+  const params = {
+    region: document.getElementById('data-region').value,
+    delay: parseInt(document.getElementById('data-delay').value),
+    universe: document.getElementById('data-universe').value,
+    search: document.getElementById('data-search').value,
+    category: document.getElementById('data-category').value,
+    limit: 50,
+  };
+  if (!isDatasets) {
+    params.dataset_id = document.getElementById('data-dataset-id')?.value || '';
+  }
+  dataState.lastParams = params;
+
+  const resultsDiv = document.getElementById('data-results');
+  resultsDiv.innerHTML = '<div class="loader" style="margin:20px auto"></div>';
+
+  try {
+    if (isDatasets) {
+      const raw = await mcpCall('search_datasets', params);
+      const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const data = result.data || result;
+      dataState.datasets = Array.isArray(data) ? data : (data.datasets || data.results || []);
+      renderDatasets();
+    } else {
+      const raw = await mcpCall('search_fields', params);
+      const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const data = result.data || result;
+      dataState.fields = Array.isArray(data) ? data : (data.fields || data.results || []);
+      renderFields();
+    }
+  } catch (e) {
+    resultsDiv.innerHTML = `<div class="empty-state"><p>Search error: ${e.message}</p></div>`;
+  }
+};
+
+function renderDatasets() {
+  const resultsDiv = document.getElementById('data-results');
+  const list = dataState.datasets;
+  if (!list.length) {
+    resultsDiv.innerHTML = '<div class="empty-state"><div class="icon">📦</div><p>No datasets found</p></div>';
+    return;
+  }
+
+  let html = `<div class="dataset-list"><table><thead><tr><th>ID</th><th>Name</th><th>Category</th><th>Description</th><th></th></tr></thead><tbody>`;
+  list.forEach(ds => {
+    const id = ds.id || ds.datasetId || '-';
+    const name = ds.name || ds.dataset || '-';
+    const cat = ds.category || ds.type || '-';
+    const desc = (ds.description || ds.longDescription || '').substring(0, 80);
+    const isSelected = dataState.selected.some(s => s.id === id && s.type === 'dataset');
+    html += `<tr>
+      <td style="font-size:11px"><span class="expr-preview" title="${id}">${id}</span></td>
+      <td><strong>${name}</strong></td>
+      <td><span class="tag tag-blue">${cat}</span></td>
+      <td><small>${desc}</small></td>
+      <td>
+        <button class="btn btn-sm" onclick="locateItem('${id}', 'dataset')" title="Details">ℹ️</button>
+        ${isSelected
+          ? `<button class="btn btn-sm tag-red" onclick="removeSelected('${id}')" style="color:var(--red)">✕</button>`
+          : `<button class="btn btn-sm btn-primary" onclick="addSelected({id:'${id}',name:'${name.replace(/'/g, "\\'")}',type:'dataset',category:'${cat}'})">+ Add</button>`
+        }
+      </td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  html += `<p style="font-size:12px;color:var(--text2)">${list.length} datasets</p>`;
+  resultsDiv.innerHTML = html;
+}
+
+function renderFields() {
+  const resultsDiv = document.getElementById('data-results');
+  const list = dataState.fields;
+  if (!list.length) {
+    resultsDiv.innerHTML = '<div class="empty-state"><div class="icon">🔤</div><p>No fields found</p></div>';
+    return;
+  }
+
+  let html = `<div class="field-list"><table><thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Dataset</th><th>Description</th><th></th></tr></thead><tbody>`;
+  list.forEach(f => {
+    const id = f.id || f.fieldId || '-';
+    const name = f.name || f.field || '-';
+    const type = f.type || f.dataType || f.kind || '-';
+    const dsName = f.datasetName || f.dataset || '-';
+    const desc = (f.description || f.longDescription || '').substring(0, 60);
+    const isSelected = dataState.selected.some(s => s.id === id && s.type === 'field');
+    html += `<tr>
+      <td style="font-size:11px"><span class="expr-preview" title="${id}">${id}</span></td>
+      <td><strong>${name}</strong></td>
+      <td><span class="tag tag-yellow">${type}</span></td>
+      <td><small>${dsName}</small></td>
+      <td><small>${desc}</small></td>
+      <td>
+        <button class="btn btn-sm" onclick="locateItem('${id}', 'field')" title="Details">ℹ️</button>
+        ${isSelected
+          ? `<button class="btn btn-sm tag-red" onclick="removeSelected('${id}')" style="color:var(--red)">✕</button>`
+          : `<button class="btn btn-sm btn-primary" onclick="addSelected({id:'${id}',name:'${name.replace(/'/g, "\\'")}',type:'field',dataType:'${type}'})">+ Add</button>`
+        }
+      </td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  html += `<p style="font-size:12px;color:var(--text2)">${list.length} fields</p>`;
+  resultsDiv.innerHTML = html;
+}
+
+window.locateItem = async function(id, kind) {
+  try {
+    const raw = kind === 'dataset'
+      ? await mcpCall('locate_dataset', { dataset_id: id })
+      : await mcpCall('locate_field', { field_id: id });
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const data = result.data || result;
+
+    const detailDiv = document.getElementById('data-detail');
+    detailDiv.innerHTML = `
+      <div class="detail-panel">
+        <h3 style="margin-bottom:12px">${kind === 'dataset' ? '📦' : '🔤'} ${id}</h3>
+        ${Object.entries(data).filter(([k]) => !k.startsWith('_')).map(([k, v]) => {
+          const val = typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v);
+          return `<dt>${k}</dt><dd class="expr-preview">${val.substring(0, 200)}</dd>`;
+        }).join('')}
+        <button class="btn btn-sm" onclick="document.getElementById('data-detail').innerHTML=''" style="margin-top:8px">✕ Close</button>
+      </div>`;
+  } catch (e) {
+    toast('Detail error: ' + e.message, 'error');
+  }
+};
+
+window.addSelected = function(item) {
+  if (!dataState.selected) dataState.selected = [];
+  if (dataState.selected.some(s => s.id === item.id)) {
+    toast('Already selected', 'info');
+    return;
+  }
+  dataState.selected.push(item);
+  renderSelected();
+  // Re-render current results to update +/- buttons
+  if (dataState.mode === 'datasets') renderDatasets();
+  else renderFields();
+  toast(`Added ${item.id}`, 'success');
+};
+
+window.removeSelected = function(id) {
+  dataState.selected = dataState.selected.filter(s => s.id !== id);
+  renderSelected();
+  if (dataState.mode === 'datasets') renderDatasets();
+  else renderFields();
+};
+
+window.clearSelected = function() {
+  dataState.selected = [];
+  renderSelected();
+  if (dataState.mode === 'datasets') renderDatasets();
+  else renderFields();
+};
+
+function renderSelected() {
+  const list = document.getElementById('selected-list');
+  const count = document.getElementById('selected-count');
+  if (!list) return;
+  if (count) count.textContent = `(${dataState.selected.length})`;
+
+  if (!dataState.selected.length) {
+    list.innerHTML = '<span style="color:var(--text2);font-size:13px">Click + to add items from search results</span>';
+    return;
+  }
+
+  list.innerHTML = dataState.selected.map(item =>
+    `<span class="item" onclick="removeSelected('${item.id}')" title="Click to remove">
+      ${item.type === 'dataset' ? '📦' : '🔤'} ${item.name || item.id} <span class="remove">✕</span>
+    </span>`
+  ).join('');
+}
+
+window.copySelectedAsJson = function() {
+  if (!dataState.selected.length) { toast('Nothing selected', 'info'); return; }
+  const text = JSON.stringify(dataState.selected, null, 2);
+  navigator.clipboard.writeText(text).then(() => {
+    toast('Copied JSON to clipboard', 'success');
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('Copied JSON to clipboard', 'success');
+  });
 };
 
 // ── Init ──
