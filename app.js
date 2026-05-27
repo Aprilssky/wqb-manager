@@ -723,13 +723,14 @@ function renderAlphas() {
     '<th>ID</th><th>Expression</th><th>Status</th></tr></thead><tbody>';
 
   results.forEach(a => {
-    const data = a.data || a;
-    const statusTag = data.status === 'ACTIVE' ? 'tag-green' : data.status === 'SUBMITTED' ? 'tag-blue' : data.status === 'SIMULATING' ? 'tag-yellow' : '';
-    const expr = (data.regular && data.regular.code) || data.regular || '';
+    const status = a.status || '?';
+    const statusTag = status === 'ACTIVE' ? 'tag-green' : status === 'SUBMITTED' ? 'tag-blue' : status === 'SIMULATING' ? 'tag-yellow' : status === 'UNSUBMITTED' ? '' : '';
+    const expr = (a.regular && a.regular.code) || a.regular || '';
+    const safeId = (a.id || '?').replace(/[<>&"']/g, '');
     html += `<tr>
-      <td style="font-size:11px"><span class="expr-preview" title="${data.id || data.alphaId}">${data.id || data.alphaId || '-'}</span></td>
-      <td><span class="expr-preview">${String(expr).substring(0, 80)}</span></td>
-      <td><span class="tag ${statusTag}">${data.status || '?'}</span></td>
+      <td style="font-size:11px"><span class="expr-preview" title="${safeId}">${safeId}</span></td>
+      <td><span class="expr-preview">${String(expr).substring(0, 80).replace(/[<>&]/g, '')}</span></td>
+      <td><span class="tag ${statusTag}">${status}</span></td>
     </tr>`;
   });
   html += '</tbody></table></div>';
