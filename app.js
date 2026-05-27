@@ -227,6 +227,17 @@ function closeModal() {
 }
 window.closeModal = closeModal;
 
+// ── Cache Refresh ──
+window.refreshCache = async function(tool) {
+  try {
+    const result = await mcpCall('cache_refresh', tool ? { tool } : {});
+    const text = typeof result === 'string' ? result : JSON.stringify(result);
+    toast(`🔄 缓存已刷新: ${tool || '全部'}`, 'success');
+  } catch (e) {
+    toast('刷新缓存失败: ' + e.message, 'error');
+  }
+};
+
 // ── Dashboard ──
 async function loadDashboard() {
   const el = document.getElementById('dashboard-content');
@@ -703,13 +714,15 @@ function renderAlphas() {
       <option value="EUR">EUR</option><option value="JPN">JPN</option>
     </select>
     <select id="alpha-status" onchange="loadAlphas()">
-      <option value="">All Status</option>
-      <option value="ACTIVE">ACTIVE</option>
-      <option value="SIMULATING">SIMULATING</option>
-      <option value="SIMULATED">SIMULATED</option>
-      <option value="SUBMITTED">SUBMITTED</option>
+      <option value="">📋 全部</option>
+      <option value="ACTIVE">✅ ACTIVE</option>
+      <option value="SIMULATING">⏳ SIMULATING</option>
+      <option value="SIMULATED">📊 SIMULATED</option>
+      <option value="SUBMITTED">📤 已提交</option>
+      <option value="UNSUBMITTED">📝 未提交</option>
     </select>
-    <button class="btn btn-primary btn-sm" onclick="loadAlphas()">Refresh</button>
+    <button class="btn btn-primary btn-sm" onclick="loadAlphas()">🔍 搜索</button>
+    <button class="btn btn-sm" onclick="refreshCache('search_alphas')">🔄 刷新缓存</button>
     <span style="color:var(--text2);font-size:13px;margin-left:auto">Total: ${state.alphas.count}</span>
   </div>`;
 
