@@ -195,6 +195,7 @@ const state = {
   operators: {},
   currentTab: 'dashboard',
   tools: [],
+  detailAlphaId: null,
 };
 
 // ── Toast ──
@@ -841,7 +842,9 @@ function renderAlphas() {
   }
 
   html += '<div class="table-wrap" style="max-height:500px;overflow-y:auto"><table><thead><tr>' +
-    '<th>ID</th><th>Expression</th><th>Status</th><th>Sharpe</th><th>Fitness</th><th>Returns</th></tr></thead><tbody>';
+    '<th></th><th>ID</th><th>Expression</th><th>Status</th><th>Sharpe</th><th>Fitness</th><th>Returns</th><th>Created</th></tr></thead><tbody>';
+
+  const detailAlpha = state.detailAlphaId;
 
   results.forEach(a => {
     const status = a.status || '?';
@@ -853,14 +856,22 @@ function renderAlphas() {
     const returns = fmt(is.returns);
     const sharpeHighlight = !isNaN(parseFloat(is.sharpe)) && parseFloat(is.sharpe) > 1.5 ? 'style="color:var(--green);font-weight:600"' : '';
     const safeId = (a.id || '?').replace(/[<>&"']/g, '');
-    html += `<tr>
+    const dateStr = (a.dateCreated || '').substring(0, 10);
+    const isExpanded = a.id === detailAlpha;
+    html += `<tr onclick="toggleAlphaDetail('${a.id}')" style="cursor:pointer">
+      <td>${isExpanded ? '▼' : '▶'}</td>
       <td style="font-size:11px"><span class="expr-preview" title="${safeId}">${safeId}</span></td>
       <td><span class="expr-preview">${String(expr).substring(0, 80).replace(/[<>&]/g, '')}</span></td>
       <td><span class="tag ${statusTag}">${status}</span></td>
       <td ${sharpeHighlight}>${sharpe}</td>
       <td>${fitness}</td>
       <td>${returns}</td>
+      <td style="font-size:11px">${dateStr}</td>
     </tr>`;
+    if (isExpanded) {
+      html += `<tr><td colspan="8" style="padding:0;background:var(--surface2)">
+        <div style="padding:16px">${renderAlphaDetail(a)}</div></td></tr>`;
+    }
   });
   html += '</tbody></table></div>';
 
@@ -883,6 +894,98 @@ function renderAlphas() {
     <div id="sim-result" style="margin-top:8px"></div>
   </div>`;
   el.innerHTML = html;
+}
+
+// ── Alpha Detail ──
+window.toggleAlphaDetail = function(alphaId) {
+  if (state.detailAlphaId === alphaId) {
+    state.detailAlphaId = null;
+  } else {
+    state.detailAlphaId = alphaId;
+  }
+  renderAlphas();
+};
+
+function renderAlphaDetail(a) {
+  const s = a.settings || {};
+  const is = a.is || {};
+  const os = a.os || {};
+  const train = a.train || {};
+  const test = a.test || {};
+  const prod = a.prod || {};
+
+  function metricBlock(label, data, color) {
+    if (!Object.keys(data).length) return '';
+    const vals = ['sharpe','fitness','returns','drawdown','turnover','margin']
+      .filter(k => data[k] !== undefined)
+      .map(k => `<div class="stat-box">
+        <div class="num" style="color:${color||'var(--accent)'}">${fmt(data[k])}</div>
+        <div class="label">${k}</div>
+      </div>`).join('');
+    if (!vals) return '';
+    return `<div style="margin:12px 0">
+      <h4 style="margin-bottom:8px;color:var(--text2)">${label}</h4>
+      <div class="stats-grid" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr))">${vals}</div>
+    </div>`;
+  }
+
+  // Expression
+  let html = `<div style="margin-bottom:12px">
+    <div class="code-block" style="font-size:13px;white-space:pre-wrap">${(a.regular && a.regular.code) || a.regular || '(empty)'}</div>
+  </div>`;
+
+  // Metrics across all time windows
+  html += '<div style="border-bottom:1px solid var(--border);margin-bottom:12px"></div>';
+  html += '<h4 style="margin-bottom:8px">📊 Performance Metrics</h4>';
+  html += metricBlock('📈 In-Sample (is)', is, 'var(--accent)');
+  html += metricBlock('📉 Out-of-Sample (os)', os, 'var(--green)');
+  html += metricBlock('🎯 Train', train, 'var(--orange)');
+  html += metricBlock('🧪 Test', test, 'var(--accent)');
+  html += metricBlock('🏭 Prod', prod, 'var(--green)');
+
+  // Settings
+  html += '<div style="border-bottom:1px solid var(--border);margin-bottom:12px"></div>';
+  html += '<h4 style="margin-bottom:8px">⚙️ Settings</h4>';
+  html += '<div class="pills">';
+  const settingMap = {
+    region: 'Region', universe: 'Universe', delay: 'Delay', decay: 'Decay',
+    neutralization: 'Neutralization', truncation: 'Truncation',
+    pasteurization: 'Pasteurization', unitHandling: 'Unit',
+    nanHandling: 'NaN', language: 'Lang', instrumentType: 'Type',
+  };
+  Object.entries(settingMap).forEach(([k, label]) => {
+    if (s[k] !== undefined) html += `<span>${label}: ${s[k]}</span>`;
+  });
+  html += '</div>';
+
+  // Dates
+  html += '<div style="border-bottom:1px solid var(--border);margin:12px 0"></div>';
+  html += '<h4 style="margin-bottom:8px">📅 Timeline</h4>';
+  html += '<table style="font-size:12px;width:auto"><tr>';
+  ['dateCreated','dateSubmitted','dateModified'].forEach(k => {
+    if (a[k]) html += `<td style="padding:2px 12px 2px 0"><strong>${k}</strong></td><td>${a[k].substring(0,16)}</td>`;
+  });
+  html += '</tr></table>';
+
+  // Author & meta
+  html += '<div style="border-bottom:1px solid var(--border);margin:12px 0"></div>';
+  html += '<div class="pills">';
+  if (a.author) html += `<span>👤 ${a.author}</span>`;
+  if (a.category) html += `<span>📂 ${a.category}</span>`;
+  if (a.type) html += `<span>📄 ${a.type}</span>`;
+  if (a.grade) html += `<span>⭐ ${a.grade}</span>`;
+  if (a.stage) html += `<span>📌 ${a.stage}</span>`;
+  if (a.favorite) html += '<span>⭐ Favorite</span>';
+  html += '</div>';
+
+  // Tags
+  if (a.tags && a.tags.length) {
+    html += '<div style="margin-top:8px">';
+    a.tags.forEach(t => { html += `<span class="tag tag-blue">${t}</span> `; });
+    html += '</div>';
+  }
+
+  return html;
 }
 
 window.simulateAlpha = async function() {
