@@ -679,17 +679,20 @@ window.exportAlphas = function() {
 };
 
 // ── Alphas ──
+const alphaFilters = { search: '', region: 'USA', status: '' };
+
 async function loadAlphas() {
   const el = document.getElementById('alphas-content');
   el.innerHTML = '<div class="loader" style="margin:40px auto"></div>';
   try {
-    const search = document.getElementById('alpha-search')?.value || '';
-    const region = document.getElementById('alpha-region')?.value || 'USA';
-    const status = document.getElementById('alpha-status')?.value || '';
+    // Read current filter values (save to state)
+    alphaFilters.search = document.getElementById('alpha-search')?.value || '';
+    alphaFilters.region = document.getElementById('alpha-region')?.value || 'USA';
+    alphaFilters.status = document.getElementById('alpha-status')?.value || '';
 
-    const params = { region, limit: 50 };
-    if (search) params.search = search;
-    if (status) params.status = status;
+    const params = { region: alphaFilters.region, limit: 50 };
+    if (alphaFilters.search) params.search = alphaFilters.search;
+    if (alphaFilters.status) params.status = alphaFilters.status;
 
     const raw = await mcpCall('search_alphas', params);
     const results = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -702,27 +705,39 @@ async function loadAlphas() {
   }
 }
 
+function fmt(v) {
+  if (v === undefined || v === null) return '-';
+  const n = parseFloat(v);
+  if (isNaN(n)) return v;
+  if (Math.abs(n) >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (Math.abs(n) >= 1) return n.toFixed(4);
+  return n.toFixed(6);
+}
+
 function renderAlphas() {
   const el = document.getElementById('alphas-content');
   const results = state.alphas.results || [];
 
+  const sel = (v, t) => v === t ? 'selected' : '';
   let html = `
   <div class="filter-bar">
-    <input id="alpha-search" placeholder="Search..." onchange="loadAlphas()" />
+    <input id="alpha-search" placeholder="Search..." onchange="loadAlphas()" value="${alphaFilters.search}" />
     <select id="alpha-region" onchange="loadAlphas()">
-      <option value="USA">USA</option><option value="CHN">CHN</option>
-      <option value="EUR">EUR</option><option value="JPN">JPN</option>
+      <option value="USA" ${sel(alphaFilters.region,'USA')}>USA</option>
+      <option value="CHN" ${sel(alphaFilters.region,'CHN')}>CHN</option>
+      <option value="EUR" ${sel(alphaFilters.region,'EUR')}>EUR</option>
+      <option value="JPN" ${sel(alphaFilters.region,'JPN')}>JPN</option>
     </select>
     <select id="alpha-status" onchange="loadAlphas()">
-      <option value="">📋 全部</option>
-      <option value="ACTIVE">✅ ACTIVE</option>
-      <option value="SIMULATING">⏳ SIMULATING</option>
-      <option value="SIMULATED">📊 SIMULATED</option>
-      <option value="SUBMITTED">📤 已提交</option>
-      <option value="UNSUBMITTED">📝 未提交</option>
+      <option value="" ${sel(alphaFilters.status,'')}>📋 全部</option>
+      <option value="ACTIVE" ${sel(alphaFilters.status,'ACTIVE')}>✅ ACTIVE</option>
+      <option value="SIMULATING" ${sel(alphaFilters.status,'SIMULATING')}>⏳ SIMULATING</option>
+      <option value="SIMULATED" ${sel(alphaFilters.status,'SIMULATED')}>📊 SIMULATED</option>
+      <option value="SUBMITTED" ${sel(alphaFilters.status,'SUBMITTED')}>📤 已提交</option>
+      <option value="UNSUBMITTED" ${sel(alphaFilters.status,'UNSUBMITTED')}>📝 未提交</option>
     </select>
     <button class="btn btn-primary btn-sm" onclick="loadAlphas()">🔍 搜索</button>
-    <button class="btn btn-sm" onclick="refreshCache('search_alphas')">🔄 刷新缓存</button>
+    <button class="btn btn-sm" onclick="refreshCache('search_alphas');loadAlphas()">🔄 刷新缓存</button>
     <span style="color:var(--text2);font-size:13px;margin-left:auto">Total: ${state.alphas.count}</span>
   </div>`;
 
@@ -733,17 +748,25 @@ function renderAlphas() {
   }
 
   html += '<div class="table-wrap" style="max-height:500px;overflow-y:auto"><table><thead><tr>' +
-    '<th>ID</th><th>Expression</th><th>Status</th></tr></thead><tbody>';
+    '<th>ID</th><th>Expression</th><th>Status</th><th>Sharpe</th><th>Fitness</th><th>Returns</th></tr></thead><tbody>';
 
   results.forEach(a => {
     const status = a.status || '?';
-    const statusTag = status === 'ACTIVE' ? 'tag-green' : status === 'SUBMITTED' ? 'tag-blue' : status === 'SIMULATING' ? 'tag-yellow' : status === 'UNSUBMITTED' ? '' : '';
+    const statusTag = status === 'ACTIVE' ? 'tag-green' : status === 'SUBMITTED' ? 'tag-blue' : status === 'SIMULATING' ? 'tag-yellow' : status === 'SIMULATED' ? '' : '';
     const expr = (a.regular && a.regular.code) || a.regular || '';
+    const is = a.is || {};
+    const sharpe = fmt(is.sharpe);
+    const fitness = fmt(is.fitness);
+    const returns = fmt(is.returns);
+    const sharpeHighlight = !isNaN(parseFloat(is.sharpe)) && parseFloat(is.sharpe) > 1.5 ? 'style="color:var(--green);font-weight:600"' : '';
     const safeId = (a.id || '?').replace(/[<>&"']/g, '');
     html += `<tr>
       <td style="font-size:11px"><span class="expr-preview" title="${safeId}">${safeId}</span></td>
       <td><span class="expr-preview">${String(expr).substring(0, 80).replace(/[<>&]/g, '')}</span></td>
       <td><span class="tag ${statusTag}">${status}</span></td>
+      <td ${sharpeHighlight}>${sharpe}</td>
+      <td>${fitness}</td>
+      <td>${returns}</td>
     </tr>`;
   });
   html += '</tbody></table></div>';
