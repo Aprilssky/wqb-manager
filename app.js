@@ -885,7 +885,7 @@ window.exportAlphas = function() {
 };
 
 // ── Alphas ──
-const alphaFilters = { search: '', region: 'USA', status: '' };
+const alphaFilters = { search: '', region: 'USA', status: '', dateFrom: '', dateTo: '' };
 
 async function loadAlphas() {
   const el = document.getElementById('alphas-content');
@@ -895,10 +895,14 @@ async function loadAlphas() {
     alphaFilters.search = document.getElementById('alpha-search')?.value || '';
     alphaFilters.region = document.getElementById('alpha-region')?.value || 'USA';
     alphaFilters.status = document.getElementById('alpha-status')?.value || '';
+    alphaFilters.dateFrom = document.getElementById('alpha-date-from')?.value || '';
+    alphaFilters.dateTo = document.getElementById('alpha-date-to')?.value || '';
 
     const params = { region: alphaFilters.region, limit: 50 };
     if (alphaFilters.search) params.search = alphaFilters.search;
     if (alphaFilters.status) params.status = alphaFilters.status;
+    if (alphaFilters.dateFrom) params.date_created_gte = alphaFilters.dateFrom;
+    if (alphaFilters.dateTo) params.date_created_lte = alphaFilters.dateTo;
 
     const raw = await mcpCall('search_alphas', params);
     const results = typeof raw === 'string' ? JSON.parse(raw) : raw;
@@ -939,6 +943,8 @@ function renderAlphas() {
       <option value="SUBMITTED" ${sel(alphaFilters.status,'SUBMITTED')}>📤 已提交</option>
       <option value="UNSUBMITTED" ${sel(alphaFilters.status,'UNSUBMITTED')}>📝 未提交</option>
     </select>
+    <input id="alpha-date-from" type="date" onchange="loadAlphas()" value="${alphaFilters.dateFrom}" style="min-width:130px" title="创建日期起" />
+    <input id="alpha-date-to" type="date" onchange="loadAlphas()" value="${alphaFilters.dateTo}" style="min-width:130px" title="创建日期止" />
     <button class="btn btn-primary btn-sm" onclick="loadAlphas()">🔍 搜索</button>
     <button class="btn btn-sm" onclick="refreshCache('search_alphas');loadAlphas()">🔄 刷新缓存</button>
     <span style="color:var(--text2);font-size:13px;margin-left:auto">Total: ${state.alphas.count}</span>
