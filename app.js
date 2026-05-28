@@ -319,9 +319,21 @@ async function loadTemplates() {
   renderTemplates();
 }
 
+const templateTagFilter = { text: '' };
+
 function renderTemplates() {
   const el = document.getElementById('templates-content');
   const dtId = state.detailTemplateId;
+
+  // Filter by tag search
+  const tagFilter = (templateTagFilter.text || '').toLowerCase();
+  const filtered = tagFilter
+    ? state.templates.filter(t =>
+        (t.tags || []).some(tag => tag.toLowerCase().includes(tagFilter)) ||
+        (t.name || '').toLowerCase().includes(tagFilter)
+      )
+    : state.templates;
+
   if (!state.templates.length) {
     el.innerHTML = `
       <div class="empty-state">
@@ -331,21 +343,42 @@ function renderTemplates() {
       </div>`;
     return;
   }
+
   let html = '<div class="btn-group"><button class="btn btn-primary" onclick="showTemplateEditor(-1)">+ New Template</button></div>';
-  html += '<div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>Description</th><th>Variables</th><th>Actions</th></tr></thead><tbody>';
-  state.templates.forEach((t, i) => {
+
+  // Tag search bar
+  html += `<div class="filter-bar">
+    <input id="tag-search" placeholder="🔍 Search by name or tag..." value="${templateTagFilter.text}"
+      oninput="templateTagFilter.text=this.value;renderTemplates()" style="min-width:200px" />
+    ${tagFilter ? `<button class="btn btn-sm" onclick="templateTagFilter.text='';renderTemplates()">✕ Clear</button>` : ''}
+    <span style="color:var(--text2);font-size:13px;margin-left:auto">${filtered.length} / ${state.templates.length} templates</span>
+  </div>`;
+
+  if (!filtered.length) {
+    html += '<div class="empty-state"><div class="icon">🔍</div><p>No templates match your search</p></div>';
+    el.innerHTML = html;
+    return;
+  }
+
+  html += '<div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>Description</th><th>Tags</th><th>Actions</th></tr></thead><tbody>';
+  filtered.forEach((t) => {
+    // Maps index back to original array
+    const originalIdx = state.templates.indexOf(t);
     const vars = t.templateConfigurations ? Object.keys(t.templateConfigurations).length : 0;
-    const isExpanded = dtId === i;
+    const isExpanded = dtId === originalIdx;
     const safeName = (t.name || 'Unnamed').replace(/[<>&]/g, '');
-    html += `<tr onclick="toggleTemplateDetail(${i})" style="cursor:pointer">
+    const tagsHtml = (t.tags || []).map(tag =>
+      `<span class="tag tag-blue" onclick="event.stopPropagation();templateTagFilter.text='${tag.replace(/'/g, "")}';renderTemplates()" style="cursor:pointer">${tag}</span>`
+    ).join(' ');
+    html += `<tr onclick="toggleTemplateDetail(${originalIdx})" style="cursor:pointer">
       <td>${isExpanded ? '▼' : '▶'}</td>
       <td><strong>${safeName}</strong></td>
-      <td class="expr-preview">${(t.description || t.expression || '').substring(0, 100).replace(/[<>&]/g, '')}</td>
-      <td>${vars} vars</td>
+      <td class="expr-preview">${(t.description || t.expression || '').substring(0, 80).replace(/[<>&]/g, '')}</td>
+      <td>${tagsHtml || '<span style="color:var(--text2);font-size:11px">—</span>'}</td>
       <td onclick="event.stopPropagation()">
-        <button class="btn btn-sm" onclick="showTemplateEditor(${i})">Edit</button>
-        <button class="btn btn-sm btn-danger" onclick="deleteTemplate(${i})">Delete</button>
-        <button class="btn btn-sm btn-primary" onclick="generateFromTemplate(${i})">Generate</button>
+        <button class="btn btn-sm" onclick="showTemplateEditor(${originalIdx})">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteTemplate(${originalIdx})">Delete</button>
+        <button class="btn btn-sm btn-primary" onclick="generateFromTemplate(${originalIdx})">Generate</button>
       </td>
     </tr>`;
     if (isExpanded) {
@@ -366,6 +399,11 @@ function renderTemplateDetail(t) {
   let html = `<div class="code-block" style="font-size:13px;white-space:pre-wrap">${t.expression || '(empty expression)'}</div>`;
   if (t.description) {
     html += `<p style="color:var(--text2);font-size:13px;margin:8px 0">${t.description}</p>`;
+  }
+  if (t.tags && t.tags.length) {
+    html += '<div style="margin:8px 0">';
+    t.tags.forEach(tag => { html += `<span class="tag tag-blue" style="margin:2px;cursor:pointer" onclick="templateTagFilter.text='${tag.replace(/'/g,"")}';switchTab('templates')">🏷️ ${tag}</span> `; });
+    html += '</div>';
   }
   const configs = t.templateConfigurations || {};
   if (Object.keys(configs).length) {
@@ -419,6 +457,8 @@ function showTemplateEditor(index) {
     <textarea id="tmpl-desc" rows="2" placeholder="Template description">${t.description || ''}</textarea>
     <label>Expression (use <code>&lt;var_name/></code> for variables)</label>
     <textarea id="tmpl-expr" rows="6" placeholder="e.g. group(rank(&lt;field/>), sector)">${t.expression || ''}</textarea>
+    <label>Tags (comma separated)</label>
+    <input id="tmpl-tags" value="${(t.tags||[]).join(', ')}" placeholder="e.g. momentum, reversal, neutralization" />
     <label>Variables</label>
     <div id="vars-container">${varsHtml || '<p style="color:var(--text2);font-size:13px">No variables defined. Add one below.</p>'}</div>
     <button class="btn btn-sm" onclick="addVar()">+ Add Variable</button>
@@ -557,7 +597,9 @@ window.saveTemplate = function(index) {
     configs[key] = { variables: vals, configType };
   });
 
-  const template = { name, description, expression, templateConfigurations: configs };
+  const tagsInput = document.getElementById('tmpl-tags')?.value || '';
+  const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean);
+  const template = { name, description, expression, templateConfigurations: configs, tags };
 
   const templates = loadLocalTemplates();
   if (index < 0) {
@@ -754,40 +796,55 @@ window.batchSimulateGenerated = async function() {
     const results = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const resultList = Array.isArray(results) ? results : (results.results || []);
 
-    const good = resultList.filter(r => {
-      const d = r.data || r;
-      const s = parseFloat(d.sharpe || (d.is && d.is.sharpe));
-      return !isNaN(s) && s > 1.5;
-    });
-
-    toast(`Done! ${resultList.length} results, ${good.length} with Sharpe > 1.5`, 'success');
-
     const preview = document.getElementById('gen-preview');
-    const tableRows = resultList.map((r, i) => {
+
+    // Map results back to expressions, extract simulation data
+    const mapped = alphas.map((a, i) => {
+      const r = resultList[i] || {};
       const d = r.data || r;
       const isData = d.is || d.info || d.stats || {};
-      const sharpe = isData.sharpe || d.sharpe || '-';
-      const fitness = isData.fitness || d.fitness || '-';
-      const statusCode = r.status_code || r.status || '?';
-      const sharpeVal = parseFloat(sharpe);
-      const highlight = !isNaN(sharpeVal) && sharpeVal > 1.5 ? 'style="background:rgba(63,185,80,0.1)"' : '';
+      const statusCode = r.status_code || r.status || d.status || (r.ok === false ? '❌' : '✓');
+      return {
+        expr: a.expression,
+        status: statusCode,
+        sharpe: fmt(isData.sharpe || d.sharpe),
+        fitness: fmt(isData.fitness || d.fitness),
+        returns: fmt(isData.returns || d.returns),
+        drawdown: fmt(isData.drawdown || d.drawdown),
+        turnover: fmt(isData.turnover || d.turnover),
+        raw: isData,
+      };
+    });
+
+    const good = mapped.filter(m => !isNaN(parseFloat(m.sharpe)) && parseFloat(m.sharpe) > 1.5);
+    toast(`Done! ${mapped.length} results, ${good.length} with Sharpe > 1.5`, 'success');
+
+    const tableRows = mapped.map((m, i) => {
+      const sv = parseFloat(m.sharpe);
+      const highlight = !isNaN(sv) && sv > 1.5 ? 'style="background:rgba(63,185,80,0.1)"' : '';
+      const exprShort = m.expr.substring(0, 60).replace(/[<>&]/g, '');
       return `<tr ${highlight}>
         <td>${i+1}</td>
-        <td>${statusCode}</td>
-        <td>${sharpe}</td>
-        <td>${fitness}</td>
+        <td><span class="expr-preview" title="${m.expr.replace(/"/g, '&quot;')}">${exprShort}</span></td>
+        <td>${m.status}</td>
+        <td style="${!isNaN(sv) && sv > 1.5 ? 'color:var(--green);font-weight:600' : ''}">${m.sharpe}</td>
+        <td>${m.fitness}</td>
+        <td>${m.returns}</td>
+        <td>${m.drawdown}</td>
       </tr>`;
     }).join('');
 
     preview.innerHTML += `
       <div class="card" style="margin-top:12px">
-        <h3>Batch Results</h3>
-        <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
-          <div class="stat-box"><div class="num">${resultList.length}</div><div class="label">Total</div></div>
-          <div class="stat-box"><div class="num">${good.length}</div><div class="label" style="color:var(--green)">Sharpe > 1.5</div></div>
+        <h3>📊 Batch Simulation Results</h3>
+        <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+          <div class="stat-box"><div class="num">${mapped.length}</div><div class="label">Total</div></div>
+          <div class="stat-box"><div class="num" style="color:var(--green)">${good.length}</div><div class="label">Sharpe > 1.5 ✅</div></div>
+          <div class="stat-box"><div class="num">${mapped.filter(m => m.status === '✓' || m.status.toString().startsWith('2')).length}</div><div class="label">Succeeded</div></div>
+          <div class="stat-box"><div class="num" style="color:${mapped.length ? Math.round(good.length/mapped.length*100) : 0}%"></div><div class="label">Win Rate</div></div>
         </div>
         <div class="table-wrap" style="max-height:400px;overflow-y:auto">
-        <table><thead><tr><th>#</th><th>Status</th><th>Sharpe</th><th>Fitness</th></tr></thead>
+        <table><thead><tr><th>#</th><th>Expression</th><th>Status</th><th>Sharpe</th><th>Fitness</th><th>Returns</th><th>Drawdown</th></tr></thead>
         <tbody>${tableRows}</tbody></table></div>
       </div>`;
   } catch (e) {
