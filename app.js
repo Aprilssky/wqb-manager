@@ -356,14 +356,20 @@ function showTemplateEditor(index) {
   if (t.templateConfigurations) {
     varsHtml = Object.entries(t.templateConfigurations).map(([key, conf]) => {
       const vars = (conf.variables || []).join('\n');
-      return `<div class="variable-group">
+      const browseBtn = conf.configType === 'data'
+        ? `<button class="btn btn-sm" onclick="browseFields('${key}')">🔍 Browse Fields</button>`
+        : conf.configType === 'operator'
+        ? `<button class="btn btn-sm" onclick="browseOperators('${key}')">🔍 Browse Operators</button>`
+        : '';
+      return `<div class="variable-group" data-varname="${key}">
         <label>Variable: <strong>${key}</strong></label>
-        <select style="margin-bottom:4px">
+        <select style="margin-bottom:4px" onchange="updateVarBrowseBtn('${key}')">
           <option value="data" ${conf.configType === 'data' ? 'selected' : ''}>Data Field</option>
           <option value="operator" ${conf.configType === 'operator' ? 'selected' : ''}>Operator</option>
           <option value="normal" ${conf.configType === 'normal' ? 'selected' : ''}>Normal Value</option>
         </select>
         <textarea id="var-${key}" rows="4" placeholder="One value per line">${vars}</textarea>
+        <div id="browse-${key}" style="margin-top:4px">${browseBtn}</div>
         <button class="btn btn-sm btn-danger" onclick="removeVar('${key}')" style="margin-top:4px">Remove</button>
       </div>`;
     }).join('');
@@ -394,16 +400,103 @@ window.addVar = function() {
   if (document.getElementById(`var-${name}`)) { toast('Variable already exists', 'error'); return; }
   const div = document.createElement('div');
   div.className = 'variable-group';
+  div.setAttribute('data-varname', name);
   div.innerHTML = `
     <label>Variable: <strong>${name}</strong></label>
-    <select style="margin-bottom:4px">
+    <select style="margin-bottom:4px" onchange="updateVarBrowseBtn('${name}')">
       <option value="data">Data Field</option>
       <option value="operator">Operator</option>
       <option value="normal" selected>Normal Value</option>
     </select>
     <textarea id="var-${name}" rows="4" placeholder="One value per line"></textarea>
+    <div id="browse-${name}" style="margin-top:4px"></div>
     <button class="btn btn-sm btn-danger" onclick="removeVar('${name}')" style="margin-top:4px">Remove</button>`;
   container.appendChild(div);
+  updateVarBrowseBtn(name);
+};
+
+window.updateVarBrowseBtn = function(name) {
+  const container = document.getElementById(`browse-${name}`);
+  if (!container) return;
+  const select = container.closest('.variable-group').querySelector('select');
+  const type = select ? select.value : 'normal';
+  if (type === 'data') {
+    container.innerHTML = `<button class="btn btn-sm" onclick="browseFields('${name}')">🔍 Browse Fields</button>`;
+  } else if (type === 'operator') {
+    container.innerHTML = `<button class="btn btn-sm" onclick="browseOperators('${name}')">🔍 Browse Operators</button>`;
+  } else {
+    container.innerHTML = '';
+  }
+};
+
+window.browseFields = async function(varName) {
+  try {
+    const region = 'USA';
+    const raw = await mcpCall('search_fields', { region, limit: 100 });
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const data = result.data || result;
+    const fields = Array.isArray(data) ? data : (data.fields || data.results || []);
+    
+    if (!fields.length) { toast('No fields found', 'info'); return; }
+    
+    // Show a quick picker modal
+    const modal = document.getElementById('modal');
+    let listHtml = fields.map(f => {
+      const id = f.id || f.fieldId || '';
+      const name = f.name || f.field || id;
+      return `<tr onclick="pickField('${varName}','${name.replace(/'/g, "")}')" style="cursor:pointer">
+        <td style="font-size:11px">${id}</td>
+        <td>${name}</td>
+        <td><small>${(f.datasetName || f.dataset || '').substring(0, 30)}</small></td>
+      </tr>`;
+    }).join('');
+    
+    modal.querySelector('.modal-content').innerHTML = `
+      <h2>🔤 Select Field for <code>&lt;${varName}/&gt;</code></h2>
+      <div class="table-wrap" style="max-height:400px;overflow-y:auto">
+      <table><thead><tr><th>ID</th><th>Name</th><th>Dataset</th></tr></thead><tbody>${listHtml}</tbody></table></div>
+      <div class="btn-group"><button class="btn" onclick="closeModal()">Cancel</button></div>`;
+    modal.classList.add('show');
+  } catch (e) {
+    toast('Browse error: ' + e.message, 'error');
+  }
+};
+
+window.browseOperators = async function(varName) {
+  try {
+    // Try cache first, then fetch
+    const raw = await mcpCall('search_operators', {});
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const groups = typeof result === 'object' ? result : {};
+    
+    const modal = document.getElementById('modal');
+    let listHtml = Object.entries(groups).map(([cat, ops]) => {
+      const items = Array.isArray(ops) ? ops.map(op => 
+        `<tr onclick="pickField('${varName}','${op.replace(/'/g, "")}')" style="cursor:pointer">
+          <td>${op}</td><td><span class="tag tag-blue">${cat}</span></td>
+        </tr>`
+      ).join('') : '';
+      return items;
+    }).join('');
+    
+    modal.querySelector('.modal-content').innerHTML = `
+      <h2>🔧 Select Operator for <code>&lt;${varName}/&gt;</code></h2>
+      <div class="table-wrap" style="max-height:400px;overflow-y:auto">
+      <table><thead><tr><th>Name</th><th>Category</th></tr></thead><tbody>${listHtml || '<tr><td colspan="2">No operators found</td></tr>'}</tbody></table></div>
+      <div class="btn-group"><button class="btn" onclick="closeModal()">Cancel</button></div>`;
+    modal.classList.add('show');
+  } catch (e) {
+    toast('Browse error: ' + e.message, 'error');
+  }
+};
+
+window.pickField = function(varName, value) {
+  const ta = document.getElementById(`var-${varName}`);
+  if (!ta) return;
+  if (ta.value.trim()) ta.value += '\n' + value;
+  else ta.value = value;
+  toast(`Added: ${value}`, 'success');
+  closeModal();
 };
 
 window.removeVar = function(name) {
