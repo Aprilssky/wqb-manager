@@ -4,6 +4,27 @@
 // ── MCP URL Config ──
 const DEFAULT_MCP_URL = 'http://203.83.228.3:8009/mcp';
 
+// ── WQB Regions ──
+const WQB_REGIONS = [
+  ['USA', 'USA'],
+  ['CHN', 'CHN'],
+  ['EUR', 'EUR'],
+  ['JPN', 'JPN'],
+  ['GLOBAL', 'GLOBAL'],
+  ['GEM_EX_CHINA', 'GEM (ex China)'],
+  ['APAC', 'APAC'],
+  ['EMEA', 'EMEA'],
+  ['LAM', 'LAM'],
+  ['CAN', 'CANADA'],
+  ['AUS', 'AUSTRALIA'],
+  ['IND', 'INDIA'],
+  ['KOR', 'KOREA'],
+  ['TWN', 'TAIWAN'],
+  ['HKG', 'HONG KONG'],
+  ['SGP', 'SINGAPORE'],
+];
+function regionOpts(sel) { return WQB_REGIONS.map(([v,l]) => `<option value="${v}" ${sel===v?'selected':''}>${l}</option>`).join(''); }
+
 function getMcpUrl() {
   return localStorage.getItem('wqb_mcp_url') || DEFAULT_MCP_URL;
 }
@@ -684,8 +705,7 @@ window.updateGenerateForm = function() {
   params.innerHTML = `
     <div class="form-row">
       <div><label>Region</label><select id="gen-region">
-        <option value="USA">USA</option><option value="CHN">CHN</option>
-        <option value="EUR">EUR</option><option value="JPN">JPN</option>
+        ${regionOpts()}
       </select></div>
       <div><label>Delay</label><select id="gen-delay">
         <option value="0">0</option><option value="1" selected>1</option>
@@ -909,10 +929,7 @@ function renderAlphas() {
   <div class="filter-bar">
     <input id="alpha-search" placeholder="Search..." onchange="loadAlphas()" value="${alphaFilters.search}" />
     <select id="alpha-region" onchange="loadAlphas()">
-      <option value="USA" ${sel(alphaFilters.region,'USA')}>USA</option>
-      <option value="CHN" ${sel(alphaFilters.region,'CHN')}>CHN</option>
-      <option value="EUR" ${sel(alphaFilters.region,'EUR')}>EUR</option>
-      <option value="JPN" ${sel(alphaFilters.region,'JPN')}>JPN</option>
+      ${regionOpts(alphaFilters.region)}
     </select>
     <select id="alpha-status" onchange="loadAlphas()">
       <option value="" ${sel(alphaFilters.status,'')}>📋 全部</option>
@@ -974,8 +991,7 @@ function renderAlphas() {
     <textarea id="sim-expr" rows="3" placeholder="e.g. group(rank(close), sector)"></textarea>
     <div class="form-row">
       <div><label>Region</label><select id="sim-region">
-        <option value="USA">USA</option><option value="CHN">CHN</option>
-        <option value="EUR">EUR</option><option value="JPN">JPN</option>
+        ${regionOpts()}
       </select></div>
       <div><label>Delay</label><select id="sim-delay"><option value="0">0</option><option value="1" selected>1</option></select></div>
       <div><label>Universe</label><select id="sim-universe">
@@ -1225,10 +1241,7 @@ function renderDataFilters() {
       <div class="filter-bar">
         <input id="data-search" placeholder="Keyword..." value="${dataState.lastParams.search || ''}" />
         <select id="data-region">
-          <option value="USA" ${(dataState.lastParams.region||'USA')==='USA'?'selected':''}>USA</option>
-          <option value="CHN" ${dataState.lastParams.region==='CHN'?'selected':''}>CHN</option>
-          <option value="EUR" ${dataState.lastParams.region==='EUR'?'selected':''}>EUR</option>
-          <option value="JPN" ${dataState.lastParams.region==='JPN'?'selected':''}>JPN</option>
+          ${regionOpts(dataState.lastParams.region || 'USA')}
         </select>
         <select id="data-delay">
           <option value="1" ${(dataState.lastParams.delay||1)==1?'selected':''}>Delay 1</option>
