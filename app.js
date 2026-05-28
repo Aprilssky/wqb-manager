@@ -196,6 +196,7 @@ const state = {
   currentTab: 'dashboard',
   tools: [],
   detailAlphaId: null,
+  detailTemplateId: null,
 };
 
 // ── Toast ──
@@ -320,6 +321,7 @@ async function loadTemplates() {
 
 function renderTemplates() {
   const el = document.getElementById('templates-content');
+  const dtId = state.detailTemplateId;
   if (!state.templates.length) {
     el.innerHTML = `
       <div class="empty-state">
@@ -330,22 +332,55 @@ function renderTemplates() {
     return;
   }
   let html = '<div class="btn-group"><button class="btn btn-primary" onclick="showTemplateEditor(-1)">+ New Template</button></div>';
-  html += '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Description</th><th>Variables</th><th>Actions</th></tr></thead><tbody>';
+  html += '<div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>Description</th><th>Variables</th><th>Actions</th></tr></thead><tbody>';
   state.templates.forEach((t, i) => {
     const vars = t.templateConfigurations ? Object.keys(t.templateConfigurations).length : 0;
-    html += `<tr>
-      <td><strong>${t.name || 'Unnamed'}</strong></td>
-      <td class="expr-preview">${(t.description || t.expression || '').substring(0, 100)}</td>
+    const isExpanded = dtId === i;
+    const safeName = (t.name || 'Unnamed').replace(/[<>&]/g, '');
+    html += `<tr onclick="toggleTemplateDetail(${i})" style="cursor:pointer">
+      <td>${isExpanded ? '▼' : '▶'}</td>
+      <td><strong>${safeName}</strong></td>
+      <td class="expr-preview">${(t.description || t.expression || '').substring(0, 100).replace(/[<>&]/g, '')}</td>
       <td>${vars} vars</td>
-      <td>
+      <td onclick="event.stopPropagation()">
         <button class="btn btn-sm" onclick="showTemplateEditor(${i})">Edit</button>
         <button class="btn btn-sm btn-danger" onclick="deleteTemplate(${i})">Delete</button>
         <button class="btn btn-sm btn-primary" onclick="generateFromTemplate(${i})">Generate</button>
       </td>
     </tr>`;
+    if (isExpanded) {
+      html += `<tr><td colspan="5" style="padding:0;background:var(--surface2)">
+        <div style="padding:16px">${renderTemplateDetail(t)}</div></td></tr>`;
+    }
   });
   html += '</tbody></table></div>';
   el.innerHTML = html;
+}
+
+window.toggleTemplateDetail = function(idx) {
+  state.detailTemplateId = state.detailTemplateId === idx ? null : idx;
+  renderTemplates();
+};
+
+function renderTemplateDetail(t) {
+  let html = `<div class="code-block" style="font-size:13px;white-space:pre-wrap">${t.expression || '(empty expression)'}</div>`;
+  if (t.description) {
+    html += `<p style="color:var(--text2);font-size:13px;margin:8px 0">${t.description}</p>`;
+  }
+  const configs = t.templateConfigurations || {};
+  if (Object.keys(configs).length) {
+    html += '<div style="border-bottom:1px solid var(--border);margin:12px 0"></div>';
+    html += '<h4 style="margin-bottom:8px">🔧 Variable Configurations</h4>';
+    Object.entries(configs).forEach(([key, conf]) => {
+      const typeLabel = conf.configType === 'data' ? '📦 Data Field' : conf.configType === 'operator' ? '🔧 Operator' : '📝 Normal';
+      const vals = (conf.variables || []).join(', ');
+      html += `<div class="variable-group">
+        <h4><code>&lt;${key}/&gt;</code> — <span class="tag tag-blue">${typeLabel}</span></h4>
+        <div class="vars">${(conf.variables || []).map(v => `<span class="var-tag">${v.replace(/[<>&]/g,'')}</span>`).join('')}</div>
+      </div>`;
+    });
+  }
+  return html;
 }
 
 function showTemplateEditor(index) {
