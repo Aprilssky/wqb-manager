@@ -8,6 +8,22 @@
 </head>
 <body>
 
+<!-- Login Overlay -->
+<div id="login-overlay">
+  <div class="login-box">
+    <h1>🧠 <span>WQB</span> Manager</h1>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:20px">Alpha Management System</p>
+    <form id="login-form" onsubmit="return doLogin(event)">
+      <input id="login-user" type="text" placeholder="Username" autocomplete="username" />
+      <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password" />
+      <div id="login-error" style="color:#f85149;font-size:12px;margin-bottom:8px;display:none"></div>
+      <button type="submit" class="btn btn-primary" style="width:100%">🔑 登录</button>
+    </form>
+  </div>
+</div>
+
+<div id="app-container" style="display:none">
+
 <header>
   <h1>🧠 <span>WQB</span> Manager</h1>
   <div class="status-badge">
@@ -55,5 +71,6 @@
 </div>
 
 <script src="app.js"></script>
+</div>
 </body>
 </html>

@@ -398,7 +398,7 @@ window.toggleTemplateDetail = function(idx) {
 function renderTemplateDetail(t) {
   let html = `<div class="code-block" style="font-size:13px;white-space:pre-wrap">${t.expression || '(empty expression)'}</div>`;
   if (t.description) {
-    html += `<p style="color:var(--text2);font-size:13px;margin:8px 0">${t.description}</p>`;
+    html += `<div style="color:var(--text2);font-size:13px;margin:8px 0;white-space:pre-wrap;line-height:1.6">${t.description.replace(/[<>&]/g, '')}</div>`;
   }
   if (t.tags && t.tags.length) {
     html += '<div style="margin:8px 0">';
@@ -454,7 +454,7 @@ function showTemplateEditor(index) {
     <label>Template Name</label>
     <input id="tmpl-name" value="${t.name || ''}" placeholder="e.g. Double Neutral in Analyst15" />
     <label>Description</label>
-    <textarea id="tmpl-desc" rows="2" placeholder="Template description">${t.description || ''}</textarea>
+    <textarea id="tmpl-desc" rows="5" placeholder="Template description.\nSupports multiple lines — describe the template logic, intended usage, or notes.">${t.description || ''}</textarea>
     <label>Expression (use <code>&lt;var_name/></code> for variables)</label>
     <textarea id="tmpl-expr" rows="6" placeholder="e.g. group(rank(&lt;field/>), sector)">${t.expression || ''}</textarea>
     <label>Tags (comma separated)</label>
@@ -1449,7 +1449,36 @@ window.copySelectedAsJson = function() {
 };
 
 // ── Init ──
-document.addEventListener('DOMContentLoaded', async () => {
+// ── Login ──
+const LOGIN_USER = 'fish';
+const LOGIN_PASS = 'worldquant';
+
+window.doLogin = function(e) {
+  e.preventDefault();
+  const user = document.getElementById('login-user').value.trim();
+  const pass = document.getElementById('login-pass').value.trim();
+  const errEl = document.getElementById('login-error');
+
+  if (user !== LOGIN_USER || pass !== LOGIN_PASS) {
+    errEl.textContent = '用户名或密码错误';
+    errEl.style.display = 'block';
+    return false;
+  }
+
+  sessionStorage.setItem('wqb_logged_in', '1');
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('app-container').style.display = 'block';
+  initApp();
+  return false;
+};
+
+// Check login on load
+if (!sessionStorage.getItem('wqb_logged_in')) {
+  document.getElementById('login-overlay').style.display = 'flex';
+  document.getElementById('app-container').style.display = 'none';
+}
+
+async function initApp() {
   const tc = document.createElement('div');
   tc.id = 'toast-container';
   tc.className = 'toast-container';
@@ -1469,4 +1498,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   switchTab('dashboard');
+}
+
+// Auto-init if already logged in (page refresh)
+document.addEventListener('DOMContentLoaded', () => {
+  if (sessionStorage.getItem('wqb_logged_in')) {
+    initApp();
+  }
 });

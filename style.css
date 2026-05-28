@@ -464,6 +464,29 @@ tr:last-child td { border-bottom: none; }
   font-weight: 500;
 }
 
+/* ── Login Screen ── */
+#login-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.login-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 36px 32px;
+  width: 340px;
+  text-align: center;
+}
+.login-box h1 { font-size: 22px; margin-bottom: 4px; }
+.login-box h1 span { color: var(--accent); }
+.login-box input { width: 100%; margin-bottom: 10px; }
+.login-box button { margin-top: 4px; }
+
 /* Responsive */
 @media (max-width: 768px) {
   header { flex-direction: column; gap: 8px; }
